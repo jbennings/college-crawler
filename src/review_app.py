@@ -7,6 +7,7 @@ import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
+SAMPLE_DIR = PROJECT_ROOT / "data" / "sample"
 FEEDBACK_DIR = PROJECT_ROOT / "data" / "feedback"
 FEEDBACK_FILE = FEEDBACK_DIR / "crawler_review_feedback.xlsx"
 
@@ -25,19 +26,31 @@ REVIEW_STATUS_OPTIONS = [
 def get_latest_role_target_file() -> Path | None:
     """
     Returns the most recently modified role-target Excel export.
+
+    Prefers the local data/output folder.
+    Falls back to data/sample for deployed environments.
     """
-    files = list(
+    output_files = list(
         OUTPUT_DIR.glob("role_target_contacts_*.xlsx")
     )
 
-    if not files:
-        return None
+    if output_files:
+        return max(
+            output_files,
+            key=lambda path: path.stat().st_mtime,
+        )
 
-    return max(
-        files,
-        key=lambda path: path.stat().st_mtime,
+    sample_files = list(
+        SAMPLE_DIR.glob("role_target_contacts_*.xlsx")
     )
 
+    if sample_files:
+        return max(
+            sample_files,
+            key=lambda path: path.stat().st_mtime,
+        )
+
+    return None
 
 def load_latest_role_target_data() -> tuple[pd.DataFrame, Path | None]:
     """
