@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from supabase import Client, create_client
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -11,6 +12,7 @@ SAMPLE_DIR = PROJECT_ROOT / "data" / "sample"
 FEEDBACK_DIR = PROJECT_ROOT / "data" / "feedback"
 FEEDBACK_FILE = FEEDBACK_DIR / "crawler_review_feedback.xlsx"
 
+REVIEWER_NAME = "Adrien"
 
 REVIEW_STATUS_OPTIONS = [
     "Not Reviewed",
@@ -21,6 +23,28 @@ REVIEW_STATUS_OPTIONS = [
     "Missing Information",
     "Needs Manual Review",
 ]
+
+
+def get_supabase_client() -> Client | None:
+    """
+    Creates a Supabase client when Streamlit secrets are available.
+
+    Returns None during local development if Supabase secrets
+    have not been configured locally.
+    """
+    try:
+        supabase_url = st.secrets.get("SUPABASE_URL")
+        supabase_key = st.secrets.get("SUPABASE_KEY")
+    except Exception:
+        return None
+
+    if not supabase_url or not supabase_key:
+        return None
+
+    return create_client(
+        supabase_url,
+        supabase_key,
+    )
 
 
 def get_latest_role_target_file() -> Path | None:
@@ -52,6 +76,7 @@ def get_latest_role_target_file() -> Path | None:
 
     return None
 
+
 def load_latest_role_target_data() -> tuple[pd.DataFrame, Path | None]:
     """
     Loads the newest role-target Excel export.
@@ -68,34 +93,12 @@ def load_latest_role_target_data() -> tuple[pd.DataFrame, Path | None]:
 
 def ensure_feedback_dir() -> None:
     """
-    Makes sure the feedback directory exists.
+    Makes sure the local feedback directory exists.
     """
     FEEDBACK_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
-
-
-def load_feedback_data() -> pd.DataFrame:
-    """
-    Loads saved crawler review feedback.
-    """
-    if not FEEDBACK_FILE.exists():
-        return pd.DataFrame(
-            columns=[
-                "organization",
-                "name",
-                "title",
-                "email",
-                "role_categories",
-                "review_status",
-                "reviewer_notes",
-                "reviewed_at",
-                "source_url",
-            ]
-        )
-
-    return pd.read_excel(FEEDBACK_FILE)
 
 
 def clean_display_value(value) -> str:
@@ -113,34 +116,161 @@ def clean_display_value(value) -> str:
     return text
 
 
-def save_contact_review(
+def clean_storage_value(value) -> str:
+    """
+    Converts empty values into an empty string for database storage.
+    """
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+
+    if text.lower() == "none":
+        return ""
+
+    return text
+
+
+def load_feedback_from_supabase(
+    supabase: Client,
+) -> pd.DataFrame:
+    """
+    Loads all saved reviews from Supabase.
+    """
+    try:
+        response = (
+            supabase
+            .table("crawler_reviews")
+            .select("*")
+            .execute()
+        )
+
+        rows = response.data or []
+
+        return pd.DataFrame(rows)
+
+    except Exception as exc:
+        st.error(
+            "Could not load review feedback from the database."
+        )
+        st.caption(str(exc))
+        return pd.DataFrame()
+
+
+def load_feedback_from_excel() -> pd.DataFrame:
+    """
+    Loads local Excel feedback as a development fallback.
+    """
+    if not FEEDBACK_FILE.exists():
+        return pd.DataFrame()
+
+    return pd.read_excel(
+        FEEDBACK_FILE
+    )
+
+
+def load_feedback_data(
+    supabase: Client | None,
+) -> pd.DataFrame:
+    """
+    Loads review feedback.
+
+    Uses Supabase when configured.
+    Falls back to the local Excel workbook during local development.
+    """
+    if supabase is not None:
+        return load_feedback_from_supabase(
+            supabase
+        )
+
+    return load_feedback_from_excel()
+
+
+def save_contact_review_to_supabase(
+    supabase: Client,
     contact: pd.Series,
     review_status: str,
     reviewer_notes: str,
 ) -> None:
     """
-    Saves or updates one contact review.
+    Saves or updates one contact review in Supabase.
+    """
+    organization = clean_storage_value(
+        contact.get("organization")
+    )
+    name = clean_storage_value(
+        contact.get("name")
+    )
+    title = clean_storage_value(
+        contact.get("title")
+    )
+    email = clean_storage_value(
+        contact.get("email")
+    )
+    role_category = clean_storage_value(
+        contact.get("role_categories")
+    )
+    source_url = clean_storage_value(
+        contact.get("source_url")
+    )
+
+    reviewed_at = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+    review_record = {
+        "organization": organization,
+        "name": name,
+        "title": title,
+        "email": email,
+        "role_category": role_category,
+        "review_status": review_status,
+        "reviewer_notes": reviewer_notes.strip(),
+        "reviewer_name": REVIEWER_NAME,
+        "reviewed_at": reviewed_at,
+        "source_url": source_url,
+        "updated_at": reviewed_at,
+    }
+
+    (
+        supabase
+        .table("crawler_reviews")
+        .upsert(
+            review_record,
+            on_conflict="organization,name,email",
+        )
+        .execute()
+    )
+
+
+def save_contact_review_to_excel(
+    contact: pd.Series,
+    review_status: str,
+    reviewer_notes: str,
+) -> None:
+    """
+    Saves or updates one review in the local Excel fallback file.
     """
     ensure_feedback_dir()
 
-    feedback_df = load_feedback_data()
+    feedback_df = load_feedback_from_excel()
 
-    organization = clean_display_value(
+    organization = clean_storage_value(
         contact.get("organization")
     )
-    name = clean_display_value(
+    name = clean_storage_value(
         contact.get("name")
     )
-    title = clean_display_value(
+    title = clean_storage_value(
         contact.get("title")
     )
-    email = clean_display_value(
+    email = clean_storage_value(
         contact.get("email")
     )
-    role_categories = clean_display_value(
+    role_categories = clean_storage_value(
         contact.get("role_categories")
     )
-    source_url = clean_display_value(
+    source_url = clean_storage_value(
         contact.get("source_url")
     )
 
@@ -160,48 +290,74 @@ def save_contact_review(
         "source_url": source_url,
     }
 
-    existing_match = (
-        feedback_df["organization"]
-        .astype(str)
-        .eq(organization)
-        & feedback_df["name"]
-        .astype(str)
-        .eq(name)
-        & feedback_df["title"]
-        .astype(str)
-        .eq(title)
-    )
-
-    if existing_match.any():
-        matching_indexes = feedback_df[
-            existing_match
-        ].index
-
-        first_index = matching_indexes[0]
-
-        for column, value in new_row.items():
-            feedback_df.at[
-                first_index,
-                column,
-            ] = value
-
-        if len(matching_indexes) > 1:
-            feedback_df = feedback_df.drop(
-                matching_indexes[1:]
-            )
+    if feedback_df.empty:
+        feedback_df = pd.DataFrame(
+            [new_row]
+        )
 
     else:
-        feedback_df = pd.concat(
-            [
-                feedback_df,
-                pd.DataFrame([new_row]),
-            ],
-            ignore_index=True,
+        existing_match = (
+            feedback_df["organization"]
+            .astype(str)
+            .eq(organization)
+            & feedback_df["name"]
+            .astype(str)
+            .eq(name)
+            & feedback_df["title"]
+            .astype(str)
+            .eq(title)
         )
+
+        if existing_match.any():
+            first_index = feedback_df[
+                existing_match
+            ].index[0]
+
+            for column, value in new_row.items():
+                feedback_df.at[
+                    first_index,
+                    column,
+                ] = value
+
+        else:
+            feedback_df = pd.concat(
+                [
+                    feedback_df,
+                    pd.DataFrame([new_row]),
+                ],
+                ignore_index=True,
+            )
 
     feedback_df.to_excel(
         FEEDBACK_FILE,
         index=False,
+    )
+
+
+def save_contact_review(
+    supabase: Client | None,
+    contact: pd.Series,
+    review_status: str,
+    reviewer_notes: str,
+) -> None:
+    """
+    Saves a review to Supabase when available.
+
+    Falls back to local Excel during local development.
+    """
+    if supabase is not None:
+        save_contact_review_to_supabase(
+            supabase=supabase,
+            contact=contact,
+            review_status=review_status,
+            reviewer_notes=reviewer_notes,
+        )
+        return
+
+    save_contact_review_to_excel(
+        contact=contact,
+        review_status=review_status,
+        reviewer_notes=reviewer_notes,
     )
 
 
@@ -210,7 +366,7 @@ def get_saved_review(
     feedback_df: pd.DataFrame,
 ) -> dict:
     """
-    Returns saved review data for a contact, if available.
+    Returns saved review data for one contact.
     """
     if feedback_df.empty:
         return {
@@ -218,14 +374,11 @@ def get_saved_review(
             "reviewer_notes": "",
         }
 
-    organization = clean_display_value(
+    organization = clean_storage_value(
         contact.get("organization")
     )
-    name = clean_display_value(
+    name = clean_storage_value(
         contact.get("name")
-    )
-    title = clean_display_value(
-        contact.get("title")
     )
 
     matching_rows = feedback_df[
@@ -235,10 +388,25 @@ def get_saved_review(
         & feedback_df["name"]
         .astype(str)
         .eq(name)
-        & feedback_df["title"]
-        .astype(str)
-        .eq(title)
     ]
+
+    email = clean_storage_value(
+        contact.get("email")
+    )
+
+    if (
+        not matching_rows.empty
+        and "email" in matching_rows.columns
+    ):
+        email_matches = matching_rows[
+            matching_rows["email"]
+            .fillna("")
+            .astype(str)
+            .eq(email)
+        ]
+
+        if not email_matches.empty:
+            matching_rows = email_matches
 
     if matching_rows.empty:
         return {
@@ -256,7 +424,9 @@ def get_saved_review(
     if pd.isna(saved_status):
         saved_status = "Not Reviewed"
 
-    saved_status = str(saved_status).strip()
+    saved_status = str(
+        saved_status
+    ).strip()
 
     if saved_status not in REVIEW_STATUS_OPTIONS:
         saved_status = "Not Reviewed"
@@ -280,14 +450,16 @@ def get_review_status_for_contact(
     feedback_df: pd.DataFrame,
 ) -> str:
     """
-    Returns only the saved review status for filtering and progress counts.
+    Returns only the saved review status.
     """
     saved_review = get_saved_review(
         contact=contact,
         feedback_df=feedback_df,
     )
 
-    return saved_review["review_status"]
+    return saved_review[
+        "review_status"
+    ]
 
 
 def build_contact_key(
@@ -295,7 +467,7 @@ def build_contact_key(
     index: int,
 ) -> str:
     """
-    Builds a stable Streamlit widget key for a contact.
+    Builds a stable Streamlit widget key.
     """
     organization = clean_display_value(
         contact.get("organization")
@@ -318,9 +490,10 @@ def display_contact_card(
     contact: pd.Series,
     index: int,
     feedback_df: pd.DataFrame,
+    supabase: Client | None,
 ) -> None:
     """
-    Displays one crawler contact with persistent review controls.
+    Displays one crawler contact with review controls.
     """
     name = clean_display_value(
         contact.get("name")
@@ -388,9 +561,13 @@ def display_contact_card(
         saved_status
     )
 
-    with st.container(border=True):
+    with st.container(
+        border=True
+    ):
         st.subheader(name)
-        st.write(f"**{title}**")
+        st.write(
+            f"**{title}**"
+        )
 
         col1, col2 = st.columns(2)
 
@@ -445,7 +622,9 @@ def display_contact_card(
 
         st.divider()
 
-        st.write("### Adrien's Review")
+        st.write(
+            "### Adrien's Review"
+        )
 
         review_status = st.radio(
             "Review Status",
@@ -474,17 +653,27 @@ def display_contact_card(
             "Save Review",
             key=f"save_review_{contact_key}",
         ):
-            save_contact_review(
-                contact=contact,
-                review_status=review_status,
-                reviewer_notes=reviewer_notes,
-            )
+            try:
+                save_contact_review(
+                    supabase=supabase,
+                    contact=contact,
+                    review_status=review_status,
+                    reviewer_notes=reviewer_notes,
+                )
 
-            st.success(
-                "Review saved successfully."
-            )
+                st.success(
+                    "Review saved successfully."
+                )
 
-            st.rerun()
+                st.rerun()
+
+            except Exception as exc:
+                st.error(
+                    "The review could not be saved."
+                )
+                st.caption(
+                    str(exc)
+                )
 
 
 def main():
@@ -493,6 +682,8 @@ def main():
         page_icon="🎓",
         layout="wide",
     )
+
+    supabase = get_supabase_client()
 
     st.title(
         "College Crawler Review App"
@@ -510,11 +701,13 @@ def main():
     if df.empty or latest_file is None:
         st.warning(
             "No role-target Excel export "
-            "was found in data/output."
+            "was found in data/output or data/sample."
         )
         return
 
-    feedback_df = load_feedback_data()
+    feedback_df = load_feedback_data(
+        supabase
+    )
 
     st.success(
         f"Loaded {len(df)} contact records "
@@ -524,6 +717,15 @@ def main():
     st.caption(
         f"Source file: {latest_file.name}"
     )
+
+    if supabase is not None:
+        st.caption(
+            "Review storage: Supabase database"
+        )
+    else:
+        st.caption(
+            "Review storage: Local Excel fallback"
+        )
 
     if "organization" not in df.columns:
         st.error(
@@ -559,7 +761,9 @@ def main():
         == selected_college
     ].copy()
 
-    college_df["saved_review_status"] = college_df.apply(
+    college_df[
+        "saved_review_status"
+    ] = college_df.apply(
         lambda row: get_review_status_for_contact(
             contact=row,
             feedback_df=feedback_df,
@@ -597,7 +801,9 @@ def main():
         selected_college
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4 = st.columns(
+        4
+    )
 
     with col1:
         st.metric(
@@ -662,9 +868,7 @@ def main():
         ],
     )
 
-    filtered_df = (
-        college_df.copy()
-    )
+    filtered_df = college_df.copy()
 
     if review_filter == "Not Reviewed":
         filtered_df = filtered_df[
@@ -701,7 +905,8 @@ def main():
 
     if filtered_df.empty:
         st.info(
-            "No contacts match the selected filter."
+            "No contacts match "
+            "the selected filter."
         )
         return
 
@@ -712,6 +917,7 @@ def main():
             contact=contact,
             index=index,
             feedback_df=feedback_df,
+            supabase=supabase,
         )
 
 
