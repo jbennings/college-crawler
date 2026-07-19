@@ -749,20 +749,19 @@ def main():
     feedback_df = load_feedback_data(
         supabase
     )
-    if not feedback_df.empty:
-        feedback_excel = build_feedback_excel_download(
-            feedback_df
-        )
+    feedback_excel = build_feedback_excel_download(
+        feedback_df
+    )
 
-        st.download_button(
-            label="Download Reviews as Excel",
-            data=feedback_excel,
-            file_name="crawler_review_feedback.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
-        )
+    st.download_button(
+        label="Download Reviews as Excel",
+        data=feedback_excel,
+        file_name="crawler_review_feedback.xlsx",
+        mime=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+    )
     total_saved_reviews = len(feedback_df)
 
     correct_count = 0
