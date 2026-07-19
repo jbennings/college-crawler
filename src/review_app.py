@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
-
+from io import BytesIO
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
@@ -184,7 +184,48 @@ def load_feedback_data(
         )
 
     return load_feedback_from_excel()
+def build_feedback_excel_download(
+    feedback_df: pd.DataFrame,
+) -> bytes:
+    """
+    Builds an in-memory Excel workbook containing saved review feedback.
+    """
+    output = BytesIO()
 
+    export_df = feedback_df.copy()
+
+    preferred_columns = [
+        "organization",
+        "name",
+        "title",
+        "email",
+        "role_category",
+        "review_status",
+        "reviewer_notes",
+        "reviewer_name",
+        "reviewed_at",
+        "source_url",
+    ]
+
+    existing_columns = [
+        column
+        for column in preferred_columns
+        if column in export_df.columns
+    ]
+
+    export_df = export_df[
+        existing_columns
+    ]
+
+    export_df.to_excel(
+        output,
+        index=False,
+        engine="openpyxl",
+    )
+
+    output.seek(0)
+
+    return output.getvalue()
 
 def save_contact_review_to_supabase(
     supabase: Client,
@@ -708,7 +749,20 @@ def main():
     feedback_df = load_feedback_data(
         supabase
     )
+    if not feedback_df.empty:
+        feedback_excel = build_feedback_excel_download(
+            feedback_df
+        )
 
+        st.download_button(
+            label="Download Reviews as Excel",
+            data=feedback_excel,
+            file_name="crawler_review_feedback.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+        )
     st.success(
         f"Loaded {len(df)} contact records "
         "from the latest crawler export."
