@@ -763,6 +763,77 @@ def main():
                 "spreadsheetml.sheet"
             ),
         )
+    total_saved_reviews = len(feedback_df)
+
+    correct_count = 0
+    incorrect_count = 0
+    missing_info_count = 0
+    manual_review_count = 0
+
+    if not feedback_df.empty and "review_status" in feedback_df.columns:
+        correct_count = (
+            feedback_df["review_status"]
+            .astype(str)
+            .eq("Correct")
+            .sum()
+        )
+
+        incorrect_count = (
+            feedback_df["review_status"]
+            .astype(str)
+            .eq("Incorrect")
+            .sum()
+        )
+
+        missing_info_count = (
+            feedback_df["review_status"]
+            .astype(str)
+            .eq("Missing Information")
+            .sum()
+        )
+
+        manual_review_count = (
+            feedback_df["review_status"]
+            .astype(str)
+            .eq("Needs Manual Review")
+            .sum()
+        )
+
+    st.subheader("Overall Review Summary")
+
+    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+
+    with summary_col1:
+        st.metric(
+            "Total Reviewed",
+            total_saved_reviews,
+        )
+
+    with summary_col2:
+        st.metric(
+            "Correct",
+            correct_count,
+        )
+
+    with summary_col3:
+        st.metric(
+            "Incorrect",
+            incorrect_count,
+        )
+
+    with summary_col4:
+        st.metric(
+            "Missing Information",
+            missing_info_count,
+        )
+
+    with summary_col5:
+        st.metric(
+            "Needs Manual Review",
+            manual_review_count,
+        )
+
+    st.divider()
     st.success(
         f"Loaded {len(df)} contact records "
         "from the latest crawler export."
