@@ -1,11 +1,41 @@
+# Virtual Environment
 .venv/
+venv/
+
+# Environment Variables
 .env
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Excel temp files
+~$*.xlsx
+
+# Crawler output
 data/output/
 data/logs/
-.DS_Store
-.idea/~$*
-.idea/
-~$*.xlsx
-src/data/output/
+
+# Reviewer feedback
+data/feedback/
+
+# Local Streamlit settings
+.streamlit/
+
+# Pytest
+.pytest_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# OS
+Thumbs.db
